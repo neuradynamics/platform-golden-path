@@ -1,0 +1,144 @@
+# .azure-pipelines/fastapi-pr-checks.yml
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - backend/fastapi/**
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - backend/fastapi/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.11'
+
+stages:
+- stage: Test
+  displayName: 'Test'
+  jobs:
+  - job: TestFastAPI
+    displayName: 'Run Tests'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+      displayName: 'Use Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install uv
+        uv pip install -e ".[dev]"
+      workingDirectory: backend/fastapi
+      displayName: 'Install dependencies'
+
+    - script: |
+        uv pip install ruff
+        ruff check .
+      workingDirectory: backend/fastapi
+      displayName: 'Run linting'
+
+    - script: |
+        uv pip install mypy
+        mypy .
+      workingDirectory: backend/fastapi
+      displayName: 'Run type checking'
+
+    - script: |
+        uv pip install pytest pytest-cov
+        pytest --cov=app --cov-report=xml --cov-report=html
+      workingDirectory: backend/fastapi
+      displayName: 'Run tests'
+      env:
+        DATABASE_URL: $(TEST_DATABASE_URL)
+        POSTGRES_DB: $(TEST_POSTGRES_DB)
+        POSTGRES_USER: $(TEST_POSTGRES_USER)
+        POSTGRES_PASSWORD: $(TEST_POSTGRES_PASSWORD)
+        POSTGRES_HOST: $(TEST_POSTGRES_HOST)
+        POSTGRES_PORT: $(TEST_POSTGRES_PORT)
+        SECRET_KEY: $(SECRET_KEY)
+        ENVIRONMENT: "test"
+        CELERY_BROKER_URL: $(TEST_CELERY_BROKER_URL)
+        CELERY_RESULT_BACKEND: $(TEST_CELERY_RESULT_BACKEND)
+
+    - script: |
+        uv pip install bandit
+        bandit -r app -f json -o bandit-results.json
+      workingDirectory: backend/fastapi
+      displayName: 'Run Bandit security scan'
+      continueOnError: true
+
+    - script: |
+        uv pip install safety
+        safety check -r pyproject.toml --json > safety-results.json
+      workingDirectory: backend/fastapi
+      displayName: 'Run Safety dependency check'
+      continueOnError: true
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/test-results.xml'
+        mergeTestResults: true
+        testRunTitle: 'FastAPI Tests'
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/backend/fastapi/coverage.xml'
+        reportDirectory: '$(System.DefaultWorkingDirectory)/backend/fastapi/htmlcov'
+      displayName: 'Publish coverage report'
+      condition: succeededOrFailed()
+
+- stage: Build
+  displayName: 'Build'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: BuildFastAPI
+    displayName: 'Build Docker Image'
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'DockerRegistry'
+        repository: 'fastapi'
+        command: 'build'
+        Dockerfile: 'backend/fastapi/Dockerfile'
+        buildContext: 'backend/fastapi'
+        tags: |
+          $(Build.BuildId)
+      displayName: 'Build Docker image'
+      
+    - script: |
+        docker-compose -f docker-compose.yml up -d --build
+        sleep 10
+        docker-compose -f docker-compose.yml exec -T fastapi pytest app/tests/
+        docker-compose -f docker-compose.yml down
+      workingDirectory: backend/fastapi
+      displayName: 'Test Docker Compose Setup'
+      env:
+        DATABASE_URL: $(TEST_DATABASE_URL)
+        POSTGRES_DB: $(TEST_POSTGRES_DB)
+        POSTGRES_USER: $(TEST_POSTGRES_USER)
+        POSTGRES_PASSWORD: $(TEST_POSTGRES_PASSWORD)
+        POSTGRES_HOST: $(TEST_POSTGRES_HOST)
+        POSTGRES_PORT: $(TEST_POSTGRES_PORT)
+        SECRET_KEY: $(SECRET_KEY)
+        ENVIRONMENT: "test"
+        CELERY_BROKER_URL: $(TEST_CELERY_BROKER_URL)
+        CELERY_RESULT_BACKEND: $(TEST_CELERY_RESULT_BACKEND)
+        CELERY_REDBEAT_REDIS_URL: $(TEST_CELERY_REDBEAT_REDIS_URL)
+        CELERY_REDBEAT_KEY_PREFIX: $(TEST_CELERY_REDBEAT_KEY_PREFIX)
