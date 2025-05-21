@@ -1,0 +1,112 @@
+### docker-compose.yml (Development)
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      SECRET_KEY: ${SECRET_KEY}
+      ENVIRONMENT: "Development"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CELERY_REDBEAT_REDIS_URL: ${CELERY_REDBEAT_REDIS_URL}
+      CELERY_REDBEAT_KEY_PREFIX: ${CELERY_REDBEAT_KEY_PREFIX}
+    ports:
+      - 8000:8000
+    volumes:
+      - ./:/code/app/
+    depends_on:
+      - postgres_db
+      - redis
+
+  postgres_db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    container_name: redis
+    image: redis:6.2-alpine
+    ports:
+      - 6379:6379
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  celery_worker:
+    container_name: celery_worker
+    build: .
+    command: celery -A celery_worker.celery worker --loglevel=info
+    restart: always
+    volumes:
+      - ./:/code/app/
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CELERY_REDBEAT_REDIS_URL: ${CELERY_REDBEAT_REDIS_URL}
+      CELERY_REDBEAT_KEY_PREFIX: ${CELERY_REDBEAT_KEY_PREFIX}
+    depends_on:
+      - fastapi
+      - redis
+
+  celery_beat:
+    container_name: celery_beat
+    build: .
+    command: celery -A celery_worker.celery beat --loglevel=info
+    restart: always
+    volumes:
+      - ./:/code/app/
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CELERY_REDBEAT_REDIS_URL: ${CELERY_REDBEAT_REDIS_URL}
+      CELERY_REDBEAT_KEY_PREFIX: ${CELERY_REDBEAT_KEY_PREFIX}
+    depends_on:
+      - fastapi
+      - redis
+      - celery_worker
+
+  flower:
+    container_name: flower
+    build: .
+    command: celery -A celery_worker.celery flower --port=5555 --address=0.0.0.0
+    ports:
+      - 5555:5555
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      FLOWER_PORT: "5555"
+    depends_on:
+      - redis
+      - celery_worker
+
+volumes:
+  postgres_data:
+  redis_data:
