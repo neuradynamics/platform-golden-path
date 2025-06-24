@@ -1,0 +1,187 @@
+# .azure-pipelines/backend-pr-checks.yml
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - backend/**
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  - group: fastapi-secrets
+  - name: pythonVersion
+    value: '3.12'
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+    displayName: "Checkout Code"
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "$(pythonVersion)"
+      addToPath: true
+    displayName: "Use Python $(pythonVersion)"
+
+  - script: |
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+    displayName: "Install uv"
+
+  - script: |
+      cd backend/fastapi && uvx ruff check .
+    displayName: "Run Ruff linting"
+
+  - script: |
+      echo "##vso[task.complete result=SucceededWithIssues;]Ruff found linting issues"
+      exit 1
+    condition: failed()
+    displayName: "Report Ruff linting issues"
+
+  - script: |
+      cd backend/fastapi && uvx ruff format --check .
+    displayName: "Verify formatting is complete"
+
+  - script: |
+      echo "##vso[task.complete result=SucceededWithIssues;]Ruff found formatting issues"
+      exit 1
+    condition: failed()
+    displayName: "Report Ruff formatting issues"
+
+  - script: |
+      cd backend/fastapi
+      uv sync
+      uv run mypy .
+    displayName: "Run type checking"
+
+  - script: |
+      echo "##vso[task.complete result=SucceededWithIssues;]Type checking found issues"
+      exit 1
+    condition: failed()
+    displayName: "Report type checking issues"
+
+  - script: |
+      cd backend/fastapi
+      mkdir -p reports
+      uvx bandit -r app -f json -o reports/bandit-results.json || true
+      if [ -f reports/bandit-results.json ]; then
+        echo "Bandit security scan results:"
+        cat reports/bandit-results.json | jq '.results[] | {severity: .issue_severity, confidence: .issue_confidence, file: .filename, issue: .issue_text}' || echo "Failed to parse Bandit results"
+      fi
+    displayName: "Run Bandit security analysis"
+    continueOnError: true
+
+  - script: |
+      cd backend/fastapi
+      mkdir -p reports
+      # Run safety with text output to display in logs
+      echo "Safety dependency scan results:"
+      uvx safety check -r pyproject.toml --json
+
+      # Also save JSON output for artifacts
+      uvx safety check -r pyproject.toml --json > reports/safety-results.json || true
+    displayName: "Run Safety dependency check"
+    continueOnError: true
+
+  - script: |
+      cd backend/fastapi
+      mkdir -p reports
+      uvx semgrep --config=p/python --output=reports/semgrep-results.json --json app/ || true
+      if [ -f reports/semgrep-results.json ]; then
+        echo "Semgrep code analysis results:"
+        cat reports/semgrep-results.json | jq '.results[] | {severity: .extra.severity, rule: .check_id, file: .path, message: .extra.message}' || echo "Failed to parse Semgrep results"
+      fi
+    displayName: "Run Semgrep code analysis"
+    continueOnError: true
+
+  - task: CopyFiles@2
+    displayName: 'Copy security scan results to artifact staging directory'
+    inputs:
+      sourceFolder: 'backend/fastapi/reports'
+      contents: |
+        bandit-results.json
+        safety-results.json
+        semgrep-results.json
+      targetFolder: '$(Build.ArtifactStagingDirectory)/security_results'
+    continueOnError: true
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish security scan results'
+    inputs:
+      pathToPublish: '$(Build.ArtifactStagingDirectory)/security_results'
+      artifactName: 'BackendSecurityScanResults'
+    continueOnError: true
+
+  - script: |
+      cd backend/fastapi
+      mkdir -p reports
+      docker compose build
+      docker compose run --rm -e ENVIRONMENT=test \
+        -e POSTGRES_PORT=5432 \
+        fastapi sh -c "set -e; pytest -n auto -v --cov=app --cov-report=xml:/app/reports/coverage.xml --cov-report=term --junitxml=/app/reports/test-results.xml"
+    displayName: "Run Backend tests"
+    env:
+      POSTGRES_USER: $(POSTGRES_USER)
+      POSTGRES_PASSWORD: $(POSTGRES_PASSWORD)
+      POSTGRES_DB: $(POSTGRES_DB)
+      POSTGRES_HOST: $(POSTGRES_HOST)
+      DATABASE_URL: $(DATABASE_URL)
+      SECRET_KEY: $(SECRET_KEY)
+      ENVIRONMENT: "test"
+      CELERY_BROKER_URL: $(CELERY_BROKER_URL)
+      CELERY_RESULT_BACKEND: $(CELERY_RESULT_BACKEND)
+      CELERY_REDBEAT_REDIS_URL: $(CELERY_REDBEAT_REDIS_URL)
+      CELERY_REDBEAT_KEY_PREFIX: $(CELERY_REDBEAT_KEY_PREFIX)
+      TEST_DATABASE_URL: $(TEST_DATABASE_URL)
+
+  # Debug step to verify files were created
+  - script: |
+      cd backend/fastapi
+      echo "=== Checking backend/fastapi/reports directory ==="
+      ls -la reports/ || echo "backend/fastapi/reports directory not found"
+      echo "=== Contents of test-results.xml (first 20 lines) ==="
+      head -20 reports/test-results.xml || echo "test-results.xml not found"
+      echo "=== Contents of coverage.xml (first 10 lines) ==="
+      head -10 reports/coverage.xml || echo "coverage.xml not found"
+    displayName: "Debug: Verify test and coverage files"
+    continueOnError: true
+
+  - task: CopyFiles@2
+    displayName: 'Copy test results file to artifact staging directory'
+    inputs:
+      sourceFolder: 'backend/fastapi/reports'
+      contents: 'test-results.xml'
+      targetFolder: '$(Build.ArtifactStagingDirectory)/test_results'
+    continueOnError: true
+
+  - task: CopyFiles@2
+    displayName: 'Copy coverage file to artifact staging directory'
+    inputs:
+      sourceFolder: 'backend/fastapi/reports'
+      contents: 'coverage.xml'
+      targetFolder: '$(Build.ArtifactStagingDirectory)'
+    continueOnError: true
+
+  - task: PublishTestResults@2
+    displayName: 'Publish test results'
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '$(Build.ArtifactStagingDirectory)/test_results/*.xml'
+      mergeTestResults: true
+      testRunTitle: 'Backend Tests'
+      failTaskOnFailedTests: false
+    continueOnError: true
+
+  - task: PublishCodeCoverageResults@1
+    displayName: 'Publish code coverage results'
+    inputs:
+      codeCoverageTool: 'Cobertura'
+      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/coverage.xml'
+      reportDirectory: '$(Build.ArtifactStagingDirectory)'
+      failIfCoverageEmpty: false
+    continueOnError: true

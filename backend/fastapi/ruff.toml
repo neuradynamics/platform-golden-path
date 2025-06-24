@@ -1,0 +1,53 @@
+exclude = [
+    ".pyi",
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "alembic/versions",
+]
+
+line-length = 88
+indent-width = 4
+
+# Target version
+target-version = "py312"
+
+[lint]
+# Only enable formatter and import sorter
+select = ["I"]  # I for isort rules
+
+[format]
+# Black-compatible formatting settings
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[lint.isort]
+# isort settings
+known-third-party = ["fastapi", "pydantic", "sqlalchemy"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+combine-as-imports = true 
