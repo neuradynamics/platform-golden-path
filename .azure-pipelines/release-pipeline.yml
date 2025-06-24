@@ -1,0 +1,400 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  - group: release-management
+
+stages:
+  - stage: CreateReleaseCandidate
+    displayName: Create Release Candidate
+    jobs:
+      - job: TagRelease
+        pool:
+          name: Azure Pipelines
+          demands:
+            - Agent.name -equals Hosted Agent
+        steps:
+          - checkout: self
+            persistCredentials: true
+            clean: false
+            fetchDepth: 0
+            lfs: false
+
+          - task: Bash@3
+            displayName: 'Create Release Tag'
+            name: createTag
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/create-release-tag.sh'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - stage: RunBackendTests
+    displayName: Run Backend Tests
+    dependsOn: CreateReleaseCandidate
+    variables:
+      - group: release-management
+      - name: NEW_RELEASE_TAG
+        value: $[ stageDependencies.CreateReleaseCandidate.TagRelease.outputs['createTag.NEW_RELEASE_TAG'] ]
+    jobs:
+      - job: BackendTests
+        pool:
+          name: Azure Pipelines
+          demands:
+            - Agent.name -equals Hosted Agent
+        steps:
+          - checkout: self
+            fetchDepth: 0
+            
+          - script: |
+              git fetch --tags
+              git checkout $(NEW_RELEASE_TAG)
+            displayName: "Checkout release candidate"
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.12"
+              addToPath: true
+            displayName: "Use Python 3.12"
+
+          - script: |
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+            displayName: "Install uv"
+
+          - script: |
+              cd backend/fastapi
+              mkdir -p reports
+              docker compose build
+              docker compose run --rm -e ENVIRONMENT=test \
+                -e POSTGRES_PORT=5432 \
+                fastapi sh -c "set -e; pytest -n auto -v --cov=app --cov-report=xml:/app/reports/coverage.xml --cov-report=term --junitxml=/app/reports/test-results.xml"
+            displayName: "Run Backend Tests"
+            env:
+              POSTGRES_USER: $(POSTGRES_USER)
+              POSTGRES_PASSWORD: $(POSTGRES_PASSWORD)
+              POSTGRES_DB: $(POSTGRES_DB)
+              POSTGRES_HOST: $(POSTGRES_HOST)
+              DATABASE_URL: $(DATABASE_URL)
+              SECRET_KEY: $(SECRET_KEY)
+              ENVIRONMENT: "test"
+              CELERY_BROKER_URL: $(CELERY_BROKER_URL)
+              CELERY_RESULT_BACKEND: $(CELERY_RESULT_BACKEND)
+              CELERY_REDBEAT_REDIS_URL: $(CELERY_REDBEAT_REDIS_URL)
+              CELERY_REDBEAT_KEY_PREFIX: $(CELERY_REDBEAT_KEY_PREFIX)
+              TEST_DATABASE_URL: $(TEST_DATABASE_URL)
+
+          - task: CopyFiles@2
+            displayName: 'Copy test results file to artifact staging directory'
+            inputs:
+              sourceFolder: 'backend/fastapi/reports'
+              contents: 'test-results.xml'
+              targetFolder: '$(Build.ArtifactStagingDirectory)/test_results'
+            continueOnError: true
+
+          - task: CopyFiles@2
+            displayName: 'Copy coverage file to artifact staging directory'
+            inputs:
+              sourceFolder: 'backend/fastapi/reports'
+              contents: 'coverage.xml'
+              targetFolder: '$(Build.ArtifactStagingDirectory)'
+            continueOnError: true
+
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(Build.ArtifactStagingDirectory)/test_results/*.xml'
+              mergeTestResults: true
+              testRunTitle: 'Backend Tests for $(NEW_RELEASE_TAG)'
+              failTaskOnFailedTests: true
+            condition: succeededOrFailed()
+
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publish code coverage results'
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: '$(Build.ArtifactStagingDirectory)/coverage.xml'
+              reportDirectory: '$(Build.ArtifactStagingDirectory)'
+              failIfCoverageEmpty: false
+            condition: succeededOrFailed()
+          
+          - script: |
+              MESSAGE=$(cat <<SUCCESS_MSG_EOF
+              {
+                "cards": [
+                  {
+                    "header": {
+                      "title": "✅ Release Candidate $(NEW_RELEASE_TAG) Passed All Backend Tests",
+                      "subtitle": "Ready for Kubernetes Staging Deployment"
+                    },
+                    "sections": [
+                      {
+                        "widgets": [
+                          {
+                            "keyValue": {
+                              "topLabel": "Release Tag",
+                              "content": "$(NEW_RELEASE_TAG)"
+                            }
+                          },
+                          {
+                            "keyValue": {
+                              "topLabel": "Created from",
+                              "content": "$(Build.SourceBranchName)"
+                            }
+                          },
+                          {
+                            "buttons": [
+                              {
+                                "textButton": {
+                                  "text": "View Pipeline",
+                                  "onClick": {
+                                    "openLink": {
+                                      "url": "$(System.CollectionUri)/$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+              SUCCESS_MSG_EOF
+              )
+              curl --location --request POST "$(NOTIFICATION_WEBHOOK_URL)" \
+                --header "Content-Type: application/json" \
+                --data-raw "$MESSAGE"
+            condition: succeeded()
+            displayName: Send Success Notification
+
+          - script: |
+              MESSAGE=$(cat <<FAILURE_MSG_EOF
+              {
+                "cards": [
+                  {
+                    "header": {
+                      "title": "❌ Release Candidate $(NEW_RELEASE_TAG) Failed Backend Tests",
+                      "subtitle": "Not Ready for Kubernetes Staging",
+                      "imageUrl": "https://img.icons8.com/color/48/000000/high-priority.png"
+                    },
+                    "sections": [
+                      {
+                        "widgets": [
+                          {
+                            "keyValue": {
+                              "topLabel": "Release Tag",
+                              "content": "$(NEW_RELEASE_TAG)"
+                            }
+                          },
+                          {
+                            "keyValue": {
+                              "topLabel": "Created from",
+                              "content": "$(Build.SourceBranchName)"
+                            }
+                          },
+                          {
+                            "buttons": [
+                              {
+                                "textButton": {
+                                  "text": "View Pipeline Logs",
+                                  "onClick": {
+                                    "openLink": {
+                                      "url": "$(System.CollectionUri)/$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+              FAILURE_MSG_EOF
+              )
+              curl --location --request POST "$(NOTIFICATION_WEBHOOK_URL)" \
+                --header "Content-Type: application/json" \
+                --data-raw "$MESSAGE"
+            condition: failed()
+            displayName: Send Failure Notification
+
+  - stage: UpdateReleaseTag
+    displayName: Update Release Tag Variable
+    dependsOn: RunBackendTests
+    condition: succeeded()
+    variables:
+      - group: release-management
+      - name: NEW_RELEASE_TAG
+        value: $[ stageDependencies.CreateReleaseCandidate.TagRelease.outputs['createTag.NEW_RELEASE_TAG'] ]
+    jobs:
+      - job: UpdateVariableGroup
+        displayName: Update Latest Release Candidate Tag
+        pool:
+          name: Azure Pipelines
+          demands:
+            - Agent.name -equals Hosted Agent
+        steps:
+          - task: Bash@3
+            displayName: 'Update Latest Release Candidate Tag'
+            inputs:
+              targetType: 'inline'
+              script: |
+                echo "##vso[task.setvariable variable=AZURE_DEVOPS_EXT_PAT]$(System.AccessToken)"
+                az devops configure --defaults organization=$(System.CollectionUri) project=$(System.TeamProject)
+                az pipelines variable-group variable update \
+                  --group-id $VARIABLE_GROUP_ID \
+                  --name LATEST_RELEASE_CANDIDATE_TAG \
+                  --value "$(NEW_RELEASE_TAG)"
+                echo "Updated LATEST_RELEASE_CANDIDATE_TAG to $(NEW_RELEASE_TAG)"
+            env:
+              AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+              VARIABLE_GROUP_ID: 6
+
+          - task: Bash@3
+            displayName: "Send Success Notification"
+            condition: succeeded()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'SUCCESS "Release Tag $(NEW_RELEASE_TAG) Updated Successfully!" "$(NOTIFICATION_WEBHOOK_URL)" "RELEASE_TAG"'
+
+          - task: Bash@3
+            displayName: "Send Failure Notification"
+            condition: failed()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'FAILURE "Failed to Update Release Tag $(NEW_RELEASE_TAG)!" "$(NOTIFICATION_WEBHOOK_URL)" "RELEASE_TAG"'
+
+  - stage: BuildAndPushImages
+    displayName: Build and Push Docker Images
+    dependsOn: UpdateReleaseTag
+    condition: succeeded()
+    variables:
+      - group: release-management
+      - name: NEW_RELEASE_TAG
+        value: $[ stageDependencies.CreateReleaseCandidate.TagRelease.outputs['createTag.NEW_RELEASE_TAG'] ]
+    jobs:
+      - job: BuildImages
+        displayName: Build and Push Docker Images
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: self
+            displayName: "Checkout code"
+            fetchDepth: 0
+
+          - script: |
+              git fetch --tags
+              git checkout $(NEW_RELEASE_TAG)
+            displayName: "Checkout release tag"
+
+          - task: Docker@2
+            displayName: Login to ACR
+            inputs:
+              command: 'login'
+              containerRegistry: 'Pragya-ACR-Connection'
+
+          - task: Docker@2
+            displayName: 'Build and Push FastAPI Image'
+            inputs:
+              command: 'buildAndPush'
+              repository: 'backend-fastapi'
+              dockerfile: 'backend/fastapi/Dockerfile'
+              buildContext: 'backend/fastapi'
+              containerRegistry: 'Pragya-ACR-Connection'
+              tags: |
+                $(NEW_RELEASE_TAG)
+                latest
+              arguments: '--platform linux/amd64'
+
+          - task: Bash@3
+            displayName: "Send Success Notification"
+            condition: succeeded()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'SUCCESS "Docker Images Built and Pushed for $(NEW_RELEASE_TAG) Successfully!" "$(NOTIFICATION_WEBHOOK_URL)" "DOCKER_BUILD"'
+
+          - task: Bash@3
+            displayName: "Send Failure Notification"
+            condition: failed()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'FAILURE "Docker Images Build/Push Failed for $(NEW_RELEASE_TAG)!" "$(NOTIFICATION_WEBHOOK_URL)" "DOCKER_BUILD"'
+
+  - stage: DeployToKubernetes
+    displayName: Deploy to Kubernetes Staging
+    dependsOn: BuildAndPushImages
+    condition: succeeded()
+    variables:
+      - group: release-management
+      - name: NEW_RELEASE_TAG
+        value: $[ stageDependencies.CreateReleaseCandidate.TagRelease.outputs['createTag.NEW_RELEASE_TAG'] ]
+    jobs:
+      - job: KubernetesDeployment
+        displayName: Deploy to Kubernetes
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: self
+            displayName: "Checkout code"
+            fetchDepth: 0
+
+          - script: |
+              git fetch --tags
+              git checkout $(NEW_RELEASE_TAG)
+            displayName: "Checkout release tag"
+
+          - task: AzureCLI@2
+            displayName: "Get AKS Credentials"
+            inputs:
+              azureSubscription: 'Pragya-Azure-RM'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az aks get-credentials --resource-group Pragya --name pragya_staging --overwrite-existing
+                kubectl config current-context
+                kubectl get nodes
+
+          - task: Bash@3
+            displayName: "Update Image Tags in Kubernetes Manifests"
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/update-k8s-image-tags.sh'
+
+          - task: Bash@3
+            displayName: "Deploy to Kubernetes"
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/deploy-to-k8s.sh'
+
+          - task: Bash@3
+            displayName: "Verify Deployment Health"
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/verify-deployment-health.sh'
+
+          - task: Bash@3
+            displayName: "Send Success Notification"
+            condition: succeeded()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'SUCCESS "Kubernetes Deployment $(NEW_RELEASE_TAG) Successful! Backend services deployed to pragya-staging cluster" "$(NOTIFICATION_WEBHOOK_URL)" "KUBERNETES_DEPLOY"'
+        
+          - task: Bash@3
+            displayName: "Send Failure Notification"
+            condition: failed()
+            inputs:
+              targetType: 'filePath'
+              filePath: 'scripts/send-notification.sh'
+              arguments: 'FAILURE "Kubernetes Deployment $(NEW_RELEASE_TAG) Failed! Deployment to pragya-staging cluster failed" "$(NOTIFICATION_WEBHOOK_URL)" "KUBERNETES_DEPLOY"' 
