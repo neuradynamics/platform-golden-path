@@ -1,0 +1,79 @@
+# 04-qdrant.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: my-app-ns
+  labels:
+    app: qdrant
+spec:
+  ports:
+    - port: 6333
+      name: http
+      targetPort: 6333
+    - port: 6334
+      name: grpc
+      targetPort: 6334
+  clusterIP: None # Headless service
+  selector:
+    app: qdrant
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: my-app-ns
+spec:
+  serviceName: "qdrant"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+      annotations:
+        pre.hook.backup.velero.io/container: backup-hook
+        pre.hook.backup.velero.io/command: '["curl", "-f", "-X", "POST", "http://localhost:6333/snapshots"]'
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:latest
+          ports:
+            - containerPort: 6333
+              name: http
+            - containerPort: 6334
+              name: grpc
+          env:
+            - name: QDRANT__LOG_LEVEL
+              value: "INFO"
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 5
+        - name: backup-hook
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - "while true; do sleep 3600; done"
+  volumeClaimTemplates:
+    - metadata:
+        name: qdrant-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "managed-csi"
+        resources:
+          requests:
+            storage: 20Gi

@@ -1,0 +1,14 @@
+# 08-velero-schedule.yaml
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: six-hourly-app-backup
+  namespace: velero
+spec:
+  schedule: "0 */6 * * *" # Run every 6 hours 
+  template:
+    includedNamespaces:
+      - my-app-ns
+    snapshotVolumes: true
+    storageLocation: default
+    ttl: 720h0m0s # 30-day retention

@@ -1,0 +1,69 @@
+# infrastructure/k8s/06-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fastapi-ingress
+  namespace: my-app-ns
+  annotations:
+    # This annotation tells Kubernetes to use the NGINX Ingress controller.
+    kubernetes.io/ingress.class: "nginx"
+    # WebSocket support annotations
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    # Force HTTP/1.1 for WebSocket compatibility (CRITICAL for WebSocket)
+    nginx.ingress.kubernetes.io/use-http2: "false"
+    # Specify which service handles WebSocket connections
+    nginx.ingress.kubernetes.io/websocket-services: "fastapi-svc"
+    # For production, you would typically add annotations for TLS/SSL, like using cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "staging.api.pragya.neuradynamics.ai" # <-- Make sure this matches
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fastapi-svc # Routes traffic to our fastapi-svc
+            port:
+              number: 80 # The port on the fastapi-svc
+  tls:
+  - hosts:
+    - staging.api.pragya.neuradynamics.ai # <-- Make sure this matches
+    secretName: api-tls 
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller
+  namespace: my-app-ns
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/instance: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  type: LoadBalancer
+  # Using 'Local' is a best practice for ingress controllers.
+  # It preserves the client source IP and will force Azure
+  # to reconcile the load balancer and its firewall rules.
+  externalTrafficPolicy: Local
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: https
+  selector:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/instance: ingress-nginx
+    app.kubernetes.io/name: ingress-nginx 

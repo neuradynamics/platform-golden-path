@@ -1,0 +1,27 @@
+# 01-infisical-sync-crd.yaml
+apiVersion: secrets.infisical.com/v1alpha1
+kind: InfisicalSecret
+metadata:
+  name: my-app-secrets
+  namespace: my-app-ns
+spec:
+  hostAPI: "https://app.infisical.com/api" # Or your self-hosted Infisical API URL. For Infisical Cloud EU, use https://eu.infisical.com/api
+  resyncInterval: 60 # How often to check for secret updates (in seconds)
+
+  authentication:
+    universalAuth:
+      credentialsRef: # Points to the K8s secret holding the Universal Auth credentials
+        secretName: universal-auth-credentials # Must match the secret name you created
+        secretNamespace: my-app-ns # Must match the namespace where universal-auth-credentials exists
+
+      secretsScope:
+        projectSlug: "add-project-slug" # Your Infisical Project Slug
+        envSlug: "staging" # REPLACE with your Infisical Environment Slug (e.g., dev, prod)
+        secretsPath: "/backend" # Path to sync secrets from in Infisical.
+        recursive: true # Usually true to get all secrets under the path
+
+  managedSecretReference: # Defines the target Kubernetes Secret
+    secretName: my-app-kube-secrets # Name of the Kubernetes Secret to be created/updated
+    secretNamespace: my-app-ns # Namespace for the K8s secret (same as this CRD)
+    creationPolicy: "Orphan" # Optional: "Owner" (default) or "Orphan" or "Merge"
+    secretType: Opaque # Optional: Default is Opaque

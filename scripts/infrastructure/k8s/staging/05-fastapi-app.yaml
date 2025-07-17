@@ -1,0 +1,71 @@
+# 05-fastapi-app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-app
+  namespace: my-app-ns
+  labels:
+    app: fastapi
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+      containers:
+        - name: fastapi
+          image: k8appregistry.azurecr.io/backend-fastapi:latest
+          imagePullPolicy: Always # Changed to Always to ensure fresh images are pulled
+          ports:
+            - containerPort: 8000
+          command: ["bash", "-c"]
+          args:
+            - |
+              echo "Using Azure PostgreSQL Flexible Server..."
+              echo "DATABASE_URL host: $(echo $DATABASE_URL | cut -d'@' -f2 | cut -d':' -f1)"
+              echo "Running database migrations..."
+              alembic upgrade head
+              echo "Starting application..."
+              uvicorn app.main:app --host 0.0.0.0 --port 8000
+          envFrom:
+            - secretRef:
+                name: my-app-kube-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-svc
+  namespace: my-app-ns
+  labels:
+    app: fastapi
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8000
+  selector:
+    app: fastapi

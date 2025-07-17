@@ -1,0 +1,33 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # You should replace this email address with your own.
+    # It's used for urgent renewal notifications.
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: products@neuradynamics.ai
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          ingressClassName: nginx
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-tls
+  namespace: my-app-ns
+spec:
+  secretName: api-tls
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  commonName: staging.api.pragya.neuradynamics.ai
+  dnsNames:
+  - staging.api.pragya.neuradynamics.ai
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer 
