@@ -23,9 +23,9 @@ async def lifespan(application: FastAPI):
     """Application lifespan manager - runs on startup and shutdown."""
     try:
         logger.info("Application starting up")
-        
+
         # Initialize any startup services here
-        
+
         logger.info("Application startup complete")
         yield
         # Cleanup code here (if needed)
@@ -43,18 +43,18 @@ def create_application() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-    
+
     # Configure CORS
     origins = [
         settings.ALLOWED_ORIGIN_1,
     ]
-    
+
     if settings.ALLOWED_ORIGIN_2:
         origins.append(settings.ALLOWED_ORIGIN_2)
-    
+
     if settings.ALLOWED_ORIGIN_3:
         origins.append(settings.ALLOWED_ORIGIN_3)
-    
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -62,16 +62,16 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Include routers
     # app.include_router(auth_router, prefix="/v1/auth", tags=["auth"])
     # app.include_router(core_router, prefix="/v1/core", tags=["core"])
-    
+
     # Health check endpoint
     @app.get("/healthz", tags=["health"])
     async def health_check():
         return {"status": "healthy"}
-    
+
     return app
 
 
