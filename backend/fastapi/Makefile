@@ -98,19 +98,19 @@ docker_build:
 test: docker_build
 	@echo "Running tests..."
 	docker compose run --rm -e ENVIRONMENT=test \
-		fastapi sh -c "set -e; pytest -v --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
+		fastapi sh -c "set -e; uv run pytest -v --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
 
 # Run tests in parallel (faster)
 test-parallel: docker_build
 	@echo "Running tests in parallel..."
 	docker compose run --rm -e ENVIRONMENT=test \
-		fastapi sh -c "set -e; pytest -v -n auto --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
+		fastapi sh -c "set -e; uv run pytest -v -n auto --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
 
 # Run tests with specific number of workers
 test-parallel-workers: docker_build
 	@echo "Running tests with $(WORKERS) workers..."
 	docker compose run --rm -e ENVIRONMENT=test \
-		fastapi sh -c "set -e; pytest -v -n $(WORKERS) --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
+		fastapi sh -c "set -e; uv run pytest -v -n $(WORKERS) --cov=app --cov-report=xml:/code/backend/reports/coverage.xml --cov-report=term --junitxml=/code/backend/reports/test-results.xml"
 
 # Push to remote after all checks pass
 .PHONY: push
