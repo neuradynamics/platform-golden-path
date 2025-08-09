@@ -1,0 +1,47 @@
+services:
+  langgraph:
+    build: .
+    image: techtale-backend:dev
+    container_name: techtale_langgraph_dev
+    ports:
+      - "8123:8123"
+    environment:
+      # Database Configuration
+      - DATABASE_URL=postgresql://techtale_user:techtale_password@db:5432/techtale_db
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Environment Configuration
+      - ENVIRONMENT=development
+      - DEBUG=true
+      
+      # LangGraph Configuration
+      - LANGGRAPH_CHECKPOINTER_URL=${LANGGRAPH_CHECKPOINTER_URL:-sqlite:///workflow_checkpoints.db}
+      - LANGGRAPH_ENABLE_INTERRUPTS=${LANGGRAPH_ENABLE_INTERRUPTS:-true}
+      - LANGGRAPH_MAX_WORKFLOW_STEPS=${LANGGRAPH_MAX_WORKFLOW_STEPS:-20}
+      - LANGGRAPH_WORKFLOW_TIMEOUT_SECONDS=${LANGGRAPH_WORKFLOW_TIMEOUT_SECONDS:-300}
+      
+      # LangSmith Configuration (for tracing)
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-true}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-stewart-travel-agent}
+      - LANGCHAIN_TRACING_V2=true
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo "Starting LangGraph development server..."
+        uv run langgraph dev --host 0.0.0.0 --port 8123
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks:
+      - techtale-network

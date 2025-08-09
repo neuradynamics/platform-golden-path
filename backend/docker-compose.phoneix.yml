@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16
+    container_name: techtale_postgres_dev
+    environment:
+      POSTGRES_DB: techtale_db_2
+      POSTGRES_USER: techtale_user
+      POSTGRES_PASSWORD: techtale_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - phoenix_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U techtale_user -d techtale_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: techtale_phoenix_dev
+    ports:
+      - "6006:6006"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+      - PHOENIX_ENABLE_AUTH=True
+      - PHOENIX_SECRET=techtale_phoenix_secret1techtale_phoenix_secret
+      - PHOENIX_DB_HOST=db
+      - PHOENIX_DB_PORT=5432
+      - PHOENIX_DB_USER=techtale_user
+      - PHOENIX_DB_PASSWORD=techtale_password
+      - PHOENIX_DB_NAME=techtale_db_2
+    volumes:
+      - phoenix_data:/mnt/data
+
+volumes:
+  phoenix_data:
+  phoenix_db_data:
