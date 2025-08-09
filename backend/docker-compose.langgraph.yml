@@ -1,13 +1,13 @@
 services:
   langgraph:
     build: .
-    image: techtale-backend:dev
-    container_name: techtale_langgraph_dev
+    image: langgraph-backend:dev
+    container_name: Langgraph_dev
     ports:
       - "8123:8123"
     environment:
       # Database Configuration
-      - DATABASE_URL=postgresql://techtale_user:techtale_password@db:5432/techtale_db
+      - DATABASE_URL=postgresql://user:password@db:5432/new_db
       - REDIS_URL=redis://redis:6379/0
       
       # Environment Configuration
@@ -21,10 +21,10 @@ services:
       - LANGGRAPH_WORKFLOW_TIMEOUT_SECONDS=${LANGGRAPH_WORKFLOW_TIMEOUT_SECONDS:-300}
       
       # LangSmith Configuration (for tracing)
-      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-true}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING}
       - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-stewart-travel-agent}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
       - LANGCHAIN_TRACING_V2=true
       - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
     command:
@@ -43,5 +43,3 @@ services:
         condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 30s
-    networks:
-      - techtale-network
