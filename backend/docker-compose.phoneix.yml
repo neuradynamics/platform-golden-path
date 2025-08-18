@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - phoenix_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,6 +21,7 @@ services:
     container_name: phoenix_dev
     ports:
       - "6006:6006"
+      - "4317:4317"
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +34,7 @@ services:
       - PHOENIX_DB_USER=user
       - PHOENIX_DB_PASSWORD=password
       - PHOENIX_DB_NAME=db_2
+      - PHOENIX_PORT=6006
     volumes:
       - phoenix_data:/mnt/data
 
